@@ -30,6 +30,9 @@ COOKIE_NAME = "cookie_counter"
 filetypes = {"gif": "image/gif", "jpg": "image/jpg", "jpeg": "image/jpeg", "png": "image/png", "htm": "text/htm",
              "html": "text/html", "css": "text/css", "js": "text/js"}
 
+# Archivos prohibidos
+forbidden_files = {"./web_sstt.py", "./server_regex.py", "./update-py.bat", "./error.html"}
+
 # Configuración de logging
 logging.basicConfig(level=logging.INFO,
                     format='[%(asctime)s.%(msecs)03d] [%(levelname)-7s] %(message)s',
@@ -54,15 +57,14 @@ def enviar_mensaje(cs, data):
     """ Esta función envía datos (data) a través del socket cs
         Devuelve el número de bytes enviados.
     """
-    logger.info("Sending:\n{}".format(data))
+    #logger.info("Sending:\n{}".format(data))
 
+    # Nos aseguramos de que esté codificado en bytes
     if not isinstance(data, (bytes, bytearray)) :
         data = data.encode()
 
+    # Y lo enviamos
     bytes_sent = cs.send(data)
-
-    logger.debug("I'm sleeping!")
-    time.sleep(1200)
 
     return bytes_sent
 
@@ -72,6 +74,7 @@ def enviar_fichero(cs, cabecera, root):
         con la cabecera especificada.
     """
     if root:
+        logger.info("Sending file...")
         # Leer y enviar el contenido del fichero a retornar en el cuerpo de la respuesta.
         # Se abre el fichero en modo lectura y modo binario
         f = open(root, "rb")
@@ -86,14 +89,18 @@ def enviar_fichero(cs, cabecera, root):
                 data = cabecera.encode() + bloque # Solo la primera vez habrá cabecera
                 enviar_mensaje(cs, data)
                 cabecera = "" 
+        f.close()
     else :
-       	enviar_mensaje(cs, cabecera)
+        logger.info("Sending message...")
+        enviar_mensaje(cs, cabecera)
 
 def recibir_mensaje(cs):
     """ Esta función recibe datos a través del socket cs
         Leemos la información que nos llega. recv() devuelve un string con los datos.
     """
-    data = cs.recv(BUFSIZE).decode()
+    data = cs.recv(BUFSIZE)
+    if data :
+        data = data.decode()
     # logger.info("Data received:\n{}".format(data))
     return data
 
@@ -106,33 +113,22 @@ def enviar_error(cs, codigo):
     html = f.read()
     f.close()
 
-    # Extraemos las tres partes
-    aux = html.partition("ERR_CODE_END")
-    part1 = aux[0]
-    aux = aux[2].partition("ERR_CODE_MSG")
-    part2 = aux[0]
-    part3 = aux[2]
-
-    # Insertamos el código de error
-    final = part1 + ("{}".format(codigo))[-1] + part2
-
-    # Añadimos el mensaje de error
+    # Mensaje de error
     msg = code_msg.get(codigo)
 
-    # Terminamos de formar el mensaje
-    final = final + msg + part3
+    # Formar la web html de error
+    final = error_html(html, codigo, msg)
 
     """ Para ver el mensaje que se envía:
-	f = open("salida.html", "w+")
-	f.write(final)
-	f.close()
-	"""
+    f = open("salida.html", "w+")
+    f.write(final)
+    f.close()
+    """
 
     # Formar cabecera HTTP
-    #mensaje = construir_cabecera(codigo, date, server, connection, set-cookie, content-length, content-type) 
-    logger.debug("Cambiar el valor de connection al mismo que envía el cliente en enviar_error.")
-    mensaje = construir_cabecera(codigo=codigo, connection="Keep-Alive")
+    mensaje = construir_cabecera(codigo=codigo, connection="Keep-Alive", content_length=sys.getsizeof(final), content_type="text/html")
     mensaje = mensaje + final
+
     # Enviar mensaje con enviar_mensaje
     enviar_mensaje(cs, mensaje)
 
@@ -188,7 +184,7 @@ def construir_cabecera(codigo, connection, cookies=None, content_length=0, conte
 	        
             
 
-def process_cookies(headers):
+def process_cookies(headers, isHtml):
     """ Esta función procesa la cookie cookie_counter
         1. Se analizan las cabeceras en headers para buscar la cabecera Cookie
         2. Una vez encontrada una cabecera Cookie se comprueba si el valor es cookie_counter
@@ -210,11 +206,13 @@ def process_cookies(headers):
                     value = int(aux[2])
                     break
             break
-    if value == MAX_ACCESOS :
+    if value >= MAX_ACCESOS :
         return -1       # CAMBIO ---> Devuelvo -1 para diferenciar el caso en que ya estaba en MAX_ACCESOS del que 
                         #    acaba de llegar al incrementar 1
     elif value < 1 :
         return 1        # No la ha encontrado
+    elif not isHtml :
+        return value    # Si no es un html, no lo contamos como un acceso
     else :
         return value+1  # Sí la ha encontrado
 
@@ -224,20 +222,22 @@ def process_web_request(cs, webroot):
     Típicamente se seguirá un procedimiento similar al siguiente (aunque el alumno puede modificarlo si lo desea)
     """
     # Bucle para esperar hasta que lleguen datos en la red a través del socket cs con select()
+    rlist = [cs]
     while not cs.fileno() == -1:
-        rlist = [cs]
-        wlist = []
-        xlist = []
-        rsublist, wsublist, xsublist = select.select(
-            rlist, wlist, xlist, TIMEOUT_CONNECTION)
+        rsublist, [], [] = select.select(rlist, [], [], TIMEOUT_CONNECTION)
 
         # Se comprueba si hay que cerrar la conexión por exceder TIMEOUT_CONNECTION segundos
         #  sin recibir ningún mensaje o hay datos. Se utiliza select.select
-        if (rsublist or wsublist or xsublist):
+        if rsublist :
             # Si no es por timeout y hay datos en el socket cs.
             # Leer los datos con recv.
             logger.info("New data in socket. Reading...")
             data = recibir_mensaje(cs)
+
+            if not data :
+                logger.error("Data was empty, closing...")
+                cerrar_conexion(cs)
+                return
 
             # Analizar que la línea de solicitud y comprobar está bien formateada según HTTP 1.1
             aux = data.partition("\r\n")
@@ -296,25 +296,39 @@ def process_web_request(cs, webroot):
                     logger.error("Client tried to access unexisting file!")
                     enviar_error(cs, 404)
                     continue
+                # Comprobar que el recurso no pertenece a los recursos privados
+                accedido = False
+                for forb_file in forbidden_files :
+                    if os.path.samefile(root, os.path.abspath(forb_file)) :
+                        logger.error("Client tried to access forbidden file!")
+                        enviar_error(cs, 403)
+                        accedido = True
+                if accedido :
+                    continue
 
-                # Analizar las cabeceras. Imprimir cada cabecera y su valor. Si la cabecera es Cookie comprobar
-                #  el valor de cookie_counter para ver si ha llegado a MAX_ACCESOS. (process_cookies())
-                #  Si se ha llegado a MAX_ACCESOS devolver un Error "403 Forbidden"
+                # Analizar las cabeceras. Imprimir cada cabecera y su valor.
                 logger.info("Request Headers:")
                 for cabecera in headers:
                     print(
                         "\t\t\t\t    |-{}: {}".format(cabecera[0], cabecera[1]))
-                cookie_val = process_cookies(headers=headers)
+
+                # Extraer extensión para obtener el tipo de archivo. Necesario para la cabecera Content-Type
+                file_name, file_extension = os.path.splitext(root)
+                file_extension = file_extension[1:] # Eliminamos el punto de la extensión
+                content_type = filetypes.get(file_extension)
+
+                #  Si la cabecera es Cookie comprobar
+                #  el valor de cookie_counter para ver si ha llegado a MAX_ACCESOS. (process_cookies())
+                #  Si se ha llegado a MAX_ACCESOS devolver un Error "403 Forbidden"
+                cookie_val = process_cookies(headers=headers, isHtml= (content_type=="text/html"))
                 logger.info("Next cookie value: {}".format(cookie_val))
                 if cookie_val == -1 :
+                    logger.info("Max cookie reached!")
                     enviar_error(cs, 403)
 
                 # Obtener el tamaño del recurso en bytes.
                 file_size = os.path.getsize(root)
                 logger.info("Requested resource size: {}B".format(file_size))
-                # Extraer extensión para obtener el tipo de archivo. Necesario para la cabecera Content-Type
-                file_name, file_extension = os.path.splitext(root)
-                content_type = filetypes.get(file_extension)
 
                 # Preparar respuesta con código 200. Construir una respuesta que incluya: la línea de respuesta y
                 #  las cabeceras Date, Server, Connection, Set-Cookie (para la cookie cookie_counter),
@@ -332,6 +346,7 @@ def process_web_request(cs, webroot):
         else:
             logger.error("Timeout reached!")
             cerrar_conexion(cs)
+            return
 
         # NOTA: Si hay algún error, enviar una respuesta de error con una pequeña página HTML que informe del error.
 
