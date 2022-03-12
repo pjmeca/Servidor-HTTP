@@ -16,8 +16,10 @@ import sys          # sys.exit
 import re           # Analizador sintáctico
 import logging      # Para imprimir logs
 
-from multiprocessing import Process  # Para ejecutarlo en Windows
+#from multiprocessing import Process  # Para ejecutarlo en Windows
 import random
+
+from tqdm import tqdm # Barra de progreso
 
 from server_regex import *  # Expresiones regulares del servidor
 
@@ -28,7 +30,7 @@ COOKIE_NAME = "cookie_counter"
 
 # Extensiones admitidas (extension, name in HTTP)
 filetypes = {"gif": "image/gif", "jpg": "image/jpg", "jpeg": "image/jpeg", "png": "image/png", "htm": "text/htm",
-             "html": "text/html", "css": "text/css", "js": "text/js"}
+             "html": "text/html; charset=UTF-8", "css": "text/css", "js": "text/js"}
 
 # Archivos prohibidos
 forbidden_files = {"./web_sstt.py", "./server_regex.py", "./update-py.bat", "./error.html"}
@@ -78,6 +80,7 @@ def enviar_fichero(cs, cabecera, root):
         # Leer y enviar el contenido del fichero a retornar en el cuerpo de la respuesta.
         # Se abre el fichero en modo lectura y modo binario
         f = open(root, "rb")
+        bar = tqdm(total=os.path.getsize(root))
         # Se lee el fichero en bloques de BUFSIZE bytes (8KB)
         while True:
             bloque = f.read(BUFSIZE) 
@@ -89,6 +92,8 @@ def enviar_fichero(cs, cabecera, root):
                 data = cabecera.encode() + bloque # Solo la primera vez habrá cabecera
                 enviar_mensaje(cs, data)
                 cabecera = "" 
+                bar.update(len(bloque))
+        bar.close()
         f.close()
     else :
         logger.info("Sending message...")
@@ -115,6 +120,7 @@ def enviar_error(cs, codigo):
 
     # Mensaje de error
     msg = code_msg.get(codigo)
+    if not msg : msg = "" # Puede ser que el código de error no tenga un mensaje asociado
 
     # Formar la web html de error
     final = error_html(html, codigo, msg)
@@ -126,7 +132,7 @@ def enviar_error(cs, codigo):
     """
 
     # Formar cabecera HTTP
-    mensaje = construir_cabecera(codigo=codigo, connection="Keep-Alive", content_length=sys.getsizeof(final), content_type="text/html")
+    mensaje = construir_cabecera(codigo=codigo, connection="Keep-Alive", content_length=sys.getsizeof(final), content_type=filetypes.get("html"))
     mensaje = mensaje + final
 
     # Enviar mensaje con enviar_mensaje
@@ -212,12 +218,13 @@ def process_cookies(headers, isHtml):
     elif value < 1 :
         return 1        # No la ha encontrado
     elif not isHtml :
+        logger.info("Not html, delivering same cookie value.")
         return value    # Si no es un html, no lo contamos como un acceso
     else :
         return value+1  # Sí la ha encontrado
 
 
-def process_web_request(cs, webroot):
+def process_web_request(cs):
     """ Procesamiento principal de los mensajes recibidos.
     Típicamente se seguirá un procedimiento similar al siguiente (aunque el alumno puede modificarlo si lo desea)
     """
@@ -282,7 +289,6 @@ def process_web_request(cs, webroot):
                 # Hacerlo con os.path.join(), no con el "+".
                 # root = os.path.join(webroot, recurso)
                 # Con os.path.abspath podemos saber la ruta absoluta.
-                os.chdir(webroot)
                 root = os.path.abspath(recurso)
                 logger.info("Client looking for {}".format(root))
                 # Comprobar que la ruta esté dentro de webroot para que no haya fallo de seguridad --> 403
@@ -384,6 +390,7 @@ def main():
         else:
             webroot = os.path.dirname(os.path.realpath(__file__))
         logger.info("Serving files from {}".format(webroot))
+        os.chdir(webroot)
 
         # NOTA: Linux tiene la librería os path para gestionar los paths. Mirar esto.
         # NOTA 2: Para pasar de cadena binaria a string hacer cadena.decode()
@@ -427,7 +434,7 @@ def main():
                     # Cerrar el socket del padre
                     my_socket.close()
                     # Procesar la petición
-                    process_web_request(conn, webroot)
+                    process_web_request(conn)
                     # Matamos al hijo
                     sys.exit()
                 else:
