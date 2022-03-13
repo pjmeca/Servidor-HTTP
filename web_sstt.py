@@ -7,7 +7,6 @@ import socket
 import selectors  # https://docs.python.org/3/library/selectors.html
 import select
 import string
-from threading import TIMEOUT_MAX
 import types        # Para definir el tipo de datos data
 import argparse     # Leer parametros de ejecución
 import os           # Obtener ruta y extension
@@ -35,7 +34,7 @@ filetypes = {"gif": "image/gif", "jpg": "image/jpg", "jpeg": "image/jpeg", "png"
              "html": "text/html; charset=UTF-8", "css": "text/css", "js": "text/js"}
 
 # Archivos prohibidos
-forbidden_files = {"./web_sstt.py", "./server_regex.py", "./update-py.bat", "./error.html"}
+forbidden_files = {"./web_sstt.py", "./server_regex.py", "./error.html"}
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO,
