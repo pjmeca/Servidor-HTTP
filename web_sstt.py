@@ -7,6 +7,7 @@ import socket
 import selectors  # https://docs.python.org/3/library/selectors.html
 import select
 import string
+from threading import TIMEOUT_MAX
 import types        # Para definir el tipo de datos data
 import argparse     # Leer parametros de ejecución
 import os           # Obtener ruta y extension
@@ -24,9 +25,10 @@ from tqdm import tqdm # Barra de progreso
 from server_regex import *  # Expresiones regulares del servidor
 
 BUFSIZE = 8192  # Tamaño máximo del buffer que se puede utilizar
-TIMEOUT_CONNECTION = 200  # Timout para la conexión persistente
+TIMEOUT_CONNECTION = 200  # Timeout para la conexión persistente
 MAX_ACCESOS = 10
 COOKIE_NAME = "cookie_counter"
+SERVER_NAME = "web.serversstt73.com"
 
 # Extensiones admitidas (extension, name in HTTP)
 filetypes = {"gif": "image/gif", "jpg": "image/jpg", "jpeg": "image/jpeg", "png": "image/png", "htm": "text/htm",
@@ -66,9 +68,7 @@ def enviar_mensaje(cs, data):
         data = data.encode()
 
     # Y lo enviamos
-    bytes_sent = cs.send(data)
-
-    return bytes_sent
+    cs.sendall(data)
 
 
 def enviar_fichero(cs, cabecera, root):
@@ -150,7 +150,7 @@ def cerrar_conexion(cs):
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 """""""""""""""""""""PROCESAMIENTO"""""""""""""""""""""""""""
-def construir_cabecera(codigo, connection, cookies=None, content_length=0, content_type="text/html") :
+def construir_cabecera(codigo, connection, cookies=None, content_length=0, content_type="text/html", last_modified=None) :
 
     # Línea de estado. P.ej: HTTP/1.1 200 OK\r\n
     respuesta = "HTTP/1.1 {} {}\r\n".format(codigo, code_msg.get(codigo))
@@ -159,7 +159,7 @@ def construir_cabecera(codigo, connection, cookies=None, content_length=0, conte
     respuesta = respuesta + "Date: {}\r\n".format(datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT'))
 
     # Servidor. P.ej: Server: Apache/2.0.52 (CentOS)\r\n
-    respuesta = respuesta + "Server: Apache/2.0.52 (CentOS)\r\n"
+    respuesta = respuesta + "Server: {}\r\n".format(SERVER_NAME)
 
     # Conexión. P.ej: Connection: Keep-Alive\r\n
     respuesta = respuesta + "Connection: {}\r\n".format(connection)
@@ -180,8 +180,12 @@ def construir_cabecera(codigo, connection, cookies=None, content_length=0, conte
     respuesta = respuesta + "Content-Type: {}\r\n".format(content_type)
 
     # (EXTRA) Last-Modified: Tue, 30 Oct 2007 17:00:02 GMT\r\n
+    format(datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT'))
+    if last_modified :
+        respuesta = respuesta + "Last-Modified: {}\r\n".format(datetime.fromtimestamp(last_modified).strftime('%a, %d %b %Y %H:%M:%S GMT'))
     
     # (EXTRA) Keep-Alive: timeout=10, max=100\r\n
+    respuesta = respuesta + "Keep-Alive: timeout={}, max={}\r\n".format(TIMEOUT_CONNECTION, MAX_ACCESOS)
 
     # \r\n
     respuesta = respuesta + "\r\n"
@@ -212,14 +216,14 @@ def process_cookies(headers, isHtml):
                     value = int(aux[2])
                     break
             break
-    if value >= MAX_ACCESOS :
+    if not isHtml :
+        logger.info("Not html, delivering same cookie value.")
+        return value    # Si no es un html, no lo contamos como un acceso
+    elif value >= MAX_ACCESOS :
         return -1       # CAMBIO ---> Devuelvo -1 para diferenciar el caso en que ya estaba en MAX_ACCESOS del que 
                         #    acaba de llegar al incrementar 1
     elif value < 1 :
         return 1        # No la ha encontrado
-    elif not isHtml :
-        logger.info("Not html, delivering same cookie value.")
-        return value    # Si no es un html, no lo contamos como un acceso
     else :
         return value+1  # Sí la ha encontrado
 
@@ -326,11 +330,12 @@ def process_web_request(cs):
                 #  Si la cabecera es Cookie comprobar
                 #  el valor de cookie_counter para ver si ha llegado a MAX_ACCESOS. (process_cookies())
                 #  Si se ha llegado a MAX_ACCESOS devolver un Error "403 Forbidden"
-                cookie_val = process_cookies(headers=headers, isHtml= (content_type=="text/html"))
+                cookie_val = process_cookies(headers=headers, isHtml=(content_type==filetypes.get("html")))
                 logger.info("Next cookie value: {}".format(cookie_val))
                 if cookie_val == -1 :
                     logger.info("Max cookie reached!")
                     enviar_error(cs, 403)
+                    continue
 
                 # Obtener el tamaño del recurso en bytes.
                 file_size = os.path.getsize(root)
@@ -340,7 +345,7 @@ def process_web_request(cs):
                 #  las cabeceras Date, Server, Connection, Set-Cookie (para la cookie cookie_counter),
                 #  Content-Length y Content-Type.
                 logger.debug("Cambiar el valor de connection al mismo que envía el cliente en process_web_request.")
-                cabecera = construir_cabecera(codigo=200, connection="Keep-Alive", cookies=[(COOKIE_NAME, cookie_val)], content_length=file_size, content_type=content_type)
+                cabecera = construir_cabecera(codigo=200, connection="Keep-Alive", cookies=[(COOKIE_NAME, cookie_val)], content_length=file_size, content_type=content_type, last_modified=os.path.getmtime(root))
 
                 enviar_fichero(cs, cabecera, root)
                     	
