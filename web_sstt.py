@@ -26,6 +26,7 @@ from server_regex import *  # Expresiones regulares del servidor
 BUFSIZE = 8192  # Tamaño máximo del buffer que se puede utilizar
 TIMEOUT_CONNECTION = 200  # Timeout para la conexión persistente
 MAX_ACCESOS = 10
+MAX_AGE = 60 # Las cookies expiran a los 60 segundos
 COOKIE_NAME = "cookie_counter"
 SERVER_NAME = "web.serversstt73.com"
 
@@ -170,7 +171,7 @@ def construir_cabecera(codigo, connection, cookies=None, content_length=0, conte
         for cookie in cookies :
             cookie_list = cookie_list + "{}={};".format(cookie[0],cookie[1])
         cookie_list = cookie_list[:-1] # Eliminamos el último ";"
-        respuesta = respuesta + "Set-Cookie: {}\r\n".format(cookie_list)
+        respuesta = respuesta + "Set-Cookie: {}; Max-Age={}\r\n".format(cookie_list, MAX_AGE)
 
     # Content-Length. P.ej: Content-Length: 2652\r\n
     respuesta = respuesta + "Content-Length: {}\r\n".format(content_length)
