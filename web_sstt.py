@@ -276,6 +276,15 @@ def process_web_request(cs):
 
                 # Devuelve una lista con los atributos de las cabeceras.
                 headers = cabecera_er.findall(data)
+                # Verificar que la petición contenga la cabecera Host
+                contieneHost = False
+                for h in headers:
+                    if h[0] == "Host" :
+                        contieneHost = True
+                if not contieneHost:
+                    logger.error("Illegal request: no Host header!")
+                    enviar_error(cs, 400)
+                    continue
 
                 # Leer URL y eliminar parámetros si los hubiera (los parámetros están detrás del ?)
                 aux = url.partition("?")
