@@ -16,7 +16,6 @@ import sys          # sys.exit
 import re           # Analizador sintáctico
 import logging      # Para imprimir logs
 
-#from multiprocessing import Process  # Para ejecutarlo en Windows
 import random
 
 from tqdm import tqdm # Barra de progreso
@@ -431,12 +430,6 @@ def main():
 
             # Si estamos en Windows
             if os.name == "nt":
-                # Creamos un proceso con multitasking
-                """
-                p = Process(target=process_web_request,
-                            args=(conn, webroot))
-                p.start()
-                """
                 logger.error(
                     "This server cannot run on Windows due to socket.select() limitations.")
                 sys.exit(1)
