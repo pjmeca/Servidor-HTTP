@@ -26,9 +26,9 @@ from server_regex import *  # Expresiones regulares del servidor
 BUFSIZE = 8192  # Tamaño máximo del buffer que se puede utilizar
 TIMEOUT_CONNECTION = 200  # Timeout para la conexión persistente
 MAX_ACCESOS = 10
-MAX_AGE = 60 # Las cookies expiran a los 60 segundos
+MAX_AGE = 120 # Las cookies expiran a los 2 minutos
 COOKIE_NAME = "cookie_counter"
-SERVER_NAME = "web.serversstt73.com"
+SERVER_NAME = "www.serversstt73.com"
 
 # Extensiones admitidas (extension, name in HTTP)
 filetypes = {"gif": "image/gif", "jpg": "image/jpg", "jpeg": "image/jpeg", "png": "image/png", "htm": "text/htm",
